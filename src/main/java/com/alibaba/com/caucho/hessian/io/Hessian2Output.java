@@ -912,6 +912,8 @@ public class Hessian2Output
             int length = value.length();
             int strOffset = 0;
 
+            // 0x8000 = 2^15 = 1000,0000,0000,0000
+            // 序列化规范，如果字符串存储块最大2^15个字节长度
             while (length > 0x8000) {
                 int sublen = 0x8000;
 
@@ -922,13 +924,19 @@ public class Hessian2Output
                     offset = _offset;
                 }
 
+                // 存储块不能以Unicode高代理项结束，在 UTF-16 中，为补充字符分配两个 16 位的 Unicode 代码单元。
+                // 在Java中的 char 数组、String 类和 StringBuffer 类中，都采用 UTF-16 来表示字符。
+                // 在这种表示法中，补充字符被表示为一对 char 值，第一个来自高代理项区间（\uD800 - \uDBFF），
+                // 第二个来自低代理项区间（\uDC00 - \uDFFF）。
                 // chunk can't end in high surrogate
                 char tail = value.charAt(strOffset + sublen - 1);
 
                 if (0xd800 <= tail && tail <= 0xdbff)
                     sublen--;
 
+                // 序列化规范，第一位表示未完结的字符串存储块
                 buffer[offset + 0] = (byte) BC_STRING_CHUNK;
+                // 第二、三个字节表示，存储块存储的字符串长度
                 buffer[offset + 1] = (byte) (sublen >> 8);
                 buffer[offset + 2] = (byte) (sublen);
 
@@ -950,9 +958,11 @@ public class Hessian2Output
             if (length <= STRING_DIRECT_MAX) {
                 buffer[offset++] = (byte) (BC_STRING_DIRECT + length);
             } else if (length <= STRING_SHORT_MAX) {
+                // 序列化规范，255 ~ 1023长度的字符串，可以使用缩写语法，[x30-x33] b0 <utf8-data>
                 buffer[offset++] = (byte) (BC_STRING_SHORT + (length >> 8));
                 buffer[offset++] = (byte) (length);
             } else {
+                // 序列化规范，第一位表示字符串末端存储块
                 buffer[offset++] = (byte) ('S');
                 buffer[offset++] = (byte) (length >> 8);
                 buffer[offset++] = (byte) (length);
@@ -1363,22 +1373,29 @@ public class Hessian2Output
         byte[] buffer = _buffer;
 
         for (int i = 0; i < length; i++) {
+            // 缓存容量不足16时，刷新缓存，并重置偏移量
             if (SIZE <= offset + 16) {
                 _offset = offset;
                 flush();
                 offset = _offset;
             }
 
+            // 0 ~ 2^16-1
             char ch = v.charAt(i + strOffset);
 
             if (ch < 0x80)
                 buffer[offset++] = (byte) (ch);
-            else if (ch < 0x800) {
+            else if (ch < 0x800) { // 10,000,000 < ch <= 11,111,111,111
+                // & 11111
                 buffer[offset++] = (byte) (0xc0 + ((ch >> 6) & 0x1f));
+                // & 111111
                 buffer[offset++] = (byte) (0x80 + (ch & 0x3f));
             } else {
+                // & 1111
                 buffer[offset++] = (byte) (0xe0 + ((ch >> 12) & 0xf));
+                // & 111111
                 buffer[offset++] = (byte) (0x80 + ((ch >> 6) & 0x3f));
+                // & 111111
                 buffer[offset++] = (byte) (0x80 + (ch & 0x3f));
             }
         }
